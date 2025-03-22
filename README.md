@@ -22,8 +22,21 @@ A campus navigation application built with React, Express, and MongoDB. This app
    npm install
    ```
 
-3. Set up environment variables
+3. Set up MongoDB
    - Copy `.env.example` to `.env`
+   - Make an account on MongoDB
+   - Create a cluster
+   - Copy the connection string
+   - Download MongoDB Compass
+   - Connect to the cluster
+   - Create a new database (campus-navigator) and collection (classrooms)
+   - Add Data (Here is an Example):
+{
+  "id": "KHE-123",
+  "coordinates": [43.65845, -79.37923],
+  "building": "Kerr Hall",
+  "floor": 1
+}
    - Update the MongoDB connection string with your credentials
 
 4. Add MapBox token to Map.tsx
