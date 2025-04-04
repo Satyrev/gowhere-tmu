@@ -1,17 +1,104 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Classroom, getAllClassrooms, searchClassrooms } from '../services/api';
+import * as sdk from 'microsoft-cognitiveservices-speech-sdk';
+import './ClassroomSearch.css';
 
 interface ClassroomSearchProps {
   onClassroomSelect: (classroom: Classroom) => void;
+  savedClassrooms: Classroom[];
+  onSaveClassroom: (classroom: Classroom) => void;
+  onRemoveSavedClassroom: (classroomId: string) => void;
 }
 
-const ClassroomSearch: React.FC<ClassroomSearchProps> = ({ onClassroomSelect }) => {
+const ClassroomSearch: React.FC<ClassroomSearchProps> = ({ 
+  onClassroomSelect, 
+  savedClassrooms,
+  onSaveClassroom,
+  onRemoveSavedClassroom
+}) => {
   const [search, setSearch] = useState('');
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [filteredClassrooms, setFilteredClassrooms] = useState<Classroom[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognizerRef = useRef<sdk.SpeechRecognizer | null>(null);
+  const audioConfigRef = useRef<sdk.AudioConfig | null>(null);
+
+  useEffect(() => {
+    const initializeSpeech = async () => {
+      try {
+        const speechKey = process.env.REACT_APP_AZURE_SPEECH_KEY;
+        const serviceRegion = process.env.REACT_APP_AZURE_SPEECH_REGION;
+
+        if (!speechKey || !serviceRegion) {
+          setError('Azure Speech Service credentials not configured');
+          return;
+        }
+
+        const speechConfig = sdk.SpeechConfig.fromSubscription(speechKey, serviceRegion);
+        speechConfig.speechRecognitionLanguage = 'en-US';
+
+        audioConfigRef.current = sdk.AudioConfig.fromDefaultMicrophoneInput();
+        
+        recognizerRef.current = new sdk.SpeechRecognizer(speechConfig, audioConfigRef.current);
+
+        recognizerRef.current.recognized = (s, e) => {
+          if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
+            const cleanText = e.result.text.replace(/\./g, '').trim();
+            setSearch(cleanText);
+          }
+        };
+
+        recognizerRef.current.canceled = (s, e) => {
+          console.error(`CANCELED: Reason=${e.reason}`);
+          if (e.reason === sdk.CancellationReason.Error) {
+            setError(`Speech recognition error: ${e.errorDetails}`);
+          }
+          setIsListening(false);
+        };
+
+        recognizerRef.current.sessionStopped = () => {
+          setIsListening(false);
+        };
+
+      } catch (err) {
+        console.error('Error initializing speech recognition:', err);
+        setError('Failed to initialize speech recognition');
+      }
+    };
+
+    initializeSpeech();
+
+    return () => {
+      if (recognizerRef.current) {
+        recognizerRef.current.stopContinuousRecognitionAsync();
+        recognizerRef.current.close();
+      }
+    };
+  }, []);
+
+  const toggleVoiceRecognition = async () => {
+    if (!recognizerRef.current) {
+      setError('Speech recognition not initialized');
+      return;
+    }
+
+    try {
+      if (isListening) {
+        await recognizerRef.current.stopContinuousRecognitionAsync();
+      } else {
+        setError(null);
+        await recognizerRef.current.startContinuousRecognitionAsync();
+      }
+      setIsListening(!isListening);
+    } catch (err) {
+      console.error('Error toggling speech recognition:', err);
+      setError('Failed to toggle speech recognition');
+      setIsListening(false);
+    }
+  };
 
   useEffect(() => {
     const fetchClassrooms = async () => {
@@ -34,21 +121,50 @@ const ClassroomSearch: React.FC<ClassroomSearchProps> = ({ onClassroomSelect }) 
     fetchClassrooms();
   }, []);
 
+  const normalizeSearchTerm = (term: string): string => {
+    return term.toLowerCase().replace(/[^a-z0-9]/g, '');
+  };
+
+  const matchesSearch = (classroom: Classroom, searchTerm: string): boolean => {
+    const normalizedSearch = normalizeSearchTerm(searchTerm);
+    
+    const normalizedId = normalizeSearchTerm(classroom.id);
+    const normalizedBuilding = classroom.building ? normalizeSearchTerm(classroom.building) : '';
+    
+    const searchParts = normalizedSearch.split(/\s+/);
+    
+    return searchParts.every(part => 
+      normalizedId.includes(part) || 
+      normalizedBuilding.includes(part)
+    );
+  };
+
   useEffect(() => {
     if (search.trim() === '') {
-      setFilteredClassrooms(classrooms);
+      const allClassrooms = [...savedClassrooms, ...classrooms.filter(c => !savedClassrooms.some(sc => sc.id === c.id))];
+      setFilteredClassrooms(allClassrooms);
     } else {
       const performSearch = async () => {
         try {
           setLoading(true);
           const data = await searchClassrooms(search);
-          setFilteredClassrooms(data);
+          const sortedData = [...data].sort((a, b) => {
+            const aSaved = savedClassrooms.some(sc => sc.id === a.id);
+            const bSaved = savedClassrooms.some(sc => sc.id === b.id);
+            return bSaved ? 1 : aSaved ? -1 : 0;
+          });
+          setFilteredClassrooms(sortedData);
         } catch (err) {
           console.error('Search failed:', err);
-          const filtered = classrooms.filter(classroom =>
-            classroom.id.toLowerCase().includes(search.toLowerCase())
+          const filtered = classrooms.filter(classroom => 
+            matchesSearch(classroom, search)
           );
-          setFilteredClassrooms(filtered);
+          const sortedFiltered = [...filtered].sort((a, b) => {
+            const aSaved = savedClassrooms.some(sc => sc.id === a.id);
+            const bSaved = savedClassrooms.some(sc => sc.id === b.id);
+            return bSaved ? 1 : aSaved ? -1 : 0;
+          });
+          setFilteredClassrooms(sortedFiltered);
         } finally {
           setLoading(false);
         }
@@ -60,7 +176,7 @@ const ClassroomSearch: React.FC<ClassroomSearchProps> = ({ onClassroomSelect }) 
 
       return () => clearTimeout(searchTimeout);
     }
-  }, [search, classrooms]);
+  }, [search, classrooms, savedClassrooms]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.stopPropagation();
@@ -112,62 +228,66 @@ const ClassroomSearch: React.FC<ClassroomSearchProps> = ({ onClassroomSelect }) 
   ];
 
   return (
-    <div onClick={(e) => e.stopPropagation()}>
-      <input
-        type="text"
-        value={search}
-        onChange={handleInputChange}
-        placeholder="Search for a classroom"
-        className="input-field"
-        autoFocus
-        onClick={(e) => e.stopPropagation()}
-      />
-      
-      {loading && (
-        <div className="p-3 text-gray-500 text-center">
-          Loading...
-        </div>
-      )}
-      
+    <div className="classroom-search">
+      <div className="search-input-container">
+        <input
+          type="text"
+          value={search}
+          onChange={handleInputChange}
+          placeholder="Search classrooms..."
+          className="search-input"
+        />
+        <button
+          className={`voice-input-btn ${isListening ? 'listening' : ''}`}
+          onClick={toggleVoiceRecognition}
+          title={isListening ? "Stop voice input" : "Start voice input"}
+        >
+          🎤
+        </button>
+      </div>
+
       {error && (
-        <div className="p-3 text-red-700 text-center bg-red-50 rounded-md mt-2">
+        <div className="error-message">
           {error}
         </div>
       )}
-      
-      <motion.div 
-        className="max-h-60 overflow-y-auto mt-2"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.2 }}
-      >
-        {filteredClassrooms.length > 0 ? (
-          filteredClassrooms.map((classroom, index) => (
+
+      {loading ? (
+        <div className="loading">Loading...</div>
+      ) : (
+        <div className="classroom-list">
+          {filteredClassrooms.map((classroom) => (
             <motion.div
               key={classroom.id}
+              className={`classroom-item ${savedClassrooms.some(sc => sc.id === classroom.id) ? 'saved' : ''}`}
               onClick={(e) => handleClassroomClick(e, classroom)}
-              className="p-3 cursor-pointer bg-white hover:bg-blue-50 border-b border-gray-200 transition-colors"
-              whileHover={{ backgroundColor: 'rgba(25, 118, 210, 0.1)' }}
+              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.05 }}
             >
-              <div className="font-medium">{classroom.id}</div>
-              {classroom.building && (
-                <div className="text-sm text-gray-500">{classroom.building} {classroom.floor && `- Floor ${classroom.floor}`}</div>
-              )}
-              {classroom.description && (
-                <div className="text-sm text-gray-500">{classroom.description}</div>
-              )}
+              <div className="classroom-info">
+                <div className="classroom-id">{classroom.id}</div>
+                {classroom.building && (
+                  <div className="classroom-building">{classroom.building}</div>
+                )}
+              </div>
+              <button
+                className={`save-btn ${savedClassrooms.some(sc => sc.id === classroom.id) ? 'saved' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (savedClassrooms.some(sc => sc.id === classroom.id)) {
+                    onRemoveSavedClassroom(classroom.id);
+                  } else {
+                    onSaveClassroom(classroom);
+                  }
+                }}
+                title={savedClassrooms.some(sc => sc.id === classroom.id) ? "Remove from favorites" : "Add to favorites"}
+              >
+                {savedClassrooms.some(sc => sc.id === classroom.id) ? '★' : '☆'}
+              </button>
             </motion.div>
-          ))
-        ) : (
-          <div className="p-3 text-gray-500 text-center">
-            No classrooms found. Try a different search.
-          </div>
-        )}
-      </motion.div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

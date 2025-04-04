@@ -3,6 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Map from './components/Map';
 import LocationInput from './components/LocationInput';
 import ClassroomSearch from './components/ClassroomSearch';
+import DirectionsPanel from './components/DirectionsPanel';
+import AccessibilitySettings from './components/AccessibilitySettings';
+import ReportClassroom from './components/ReportClassroom';
 import { Classroom } from './services/api';
 import './App.css';
 
@@ -13,6 +16,19 @@ function App() {
   const [isControlsVisible, setIsControlsVisible] = useState(true);
   const [mapCenter, setMapCenter] = useState<[number, number]>([43.6577, -79.3788]);
   const [mapShouldUpdate, setMapShouldUpdate] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved ? JSON.parse(saved) : false;
+  });
+  const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>(() => {
+    const saved = localStorage.getItem('fontSize');
+    return (saved as 'small' | 'medium' | 'large') || 'medium';
+  });
+  const [savedClassrooms, setSavedClassrooms] = useState<Classroom[]>(() => {
+    const saved = localStorage.getItem('savedClassrooms');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   
   const handleLocationSubmit = (coordinates: [number, number]) => {
     setUserLocation(coordinates);
@@ -40,7 +56,7 @@ function App() {
 
   const toggleControls = () => {
     setIsControlsVisible(!isControlsVisible);
-    setMapShouldUpdate(true); // Need to update the map when control visibility changes for padding
+    setMapShouldUpdate(true);
   };
 
   useEffect(() => {
@@ -52,8 +68,41 @@ function App() {
     }
   }, [mapShouldUpdate]);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark-mode', isDarkMode);
+    root.classList.remove('font-size-small', 'font-size-medium', 'font-size-large');
+    root.classList.add(`font-size-${fontSize}`);
+  }, [isDarkMode, fontSize]);
+
+  const handleDarkModeChange = (isDark: boolean) => {
+    setIsDarkMode(isDark);
+  };
+
+  const handleFontSizeChange = (size: 'small' | 'medium' | 'large') => {
+    setFontSize(size);
+  };
+
+  // Save classroom to favorites
+  const handleSaveClassroom = (classroom: Classroom) => {
+    setSavedClassrooms(prev => {
+      const newSaved = [...prev, classroom];
+      localStorage.setItem('savedClassrooms', JSON.stringify(newSaved));
+      return newSaved;
+    });
+  };
+
+  // Remove classroom from favorites
+  const handleRemoveSavedClassroom = (classroomId: string) => {
+    setSavedClassrooms(prev => {
+      const newSaved = prev.filter(c => c.id !== classroomId);
+      localStorage.setItem('savedClassrooms', JSON.stringify(newSaved));
+      return newSaved;
+    });
+  };
+
   return (
-    <div className="App">
+    <div className={`App ${isDarkMode ? 'dark-mode' : ''} font-size-${fontSize}`}>
       {/* Full-screen map */}
       <div className="map-container">
         <Map 
@@ -124,6 +173,13 @@ function App() {
                     >
                       {selectedClassroom ? selectedClassroom.id : 'Select Classroom'}
                     </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setIsReportModalOpen(true)}
+                      title="Report missing classroom"
+                    >
+                      📝
+                    </button>
                   </div>
                   
                   <AnimatePresence>
@@ -137,7 +193,12 @@ function App() {
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="p-2">
-                          <ClassroomSearch onClassroomSelect={handleClassroomSelect} />
+                          <ClassroomSearch 
+                            onClassroomSelect={handleClassroomSelect}
+                            savedClassrooms={savedClassrooms}
+                            onSaveClassroom={handleSaveClassroom}
+                            onRemoveSavedClassroom={handleRemoveSavedClassroom}
+                          />
                         </div>
                       </motion.div>
                     )}
@@ -151,9 +212,26 @@ function App() {
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.2 }}
                   >
-                    <div>Classroom: {selectedClassroom.id}</div>
-                    <div>Lat: {selectedClassroom.coordinates[0].toFixed(6)}</div>
-                    <div>Lng: {selectedClassroom.coordinates[1].toFixed(6)}</div>
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <div>Classroom: {selectedClassroom.id}</div>
+                        <div>Lat: {selectedClassroom.coordinates[0].toFixed(6)}</div>
+                        <div>Lng: {selectedClassroom.coordinates[1].toFixed(6)}</div>
+                      </div>
+                      <button
+                        className={`save-btn ${savedClassrooms.some(c => c.id === selectedClassroom.id) ? 'saved' : ''}`}
+                        onClick={() => {
+                          if (savedClassrooms.some(c => c.id === selectedClassroom.id)) {
+                            handleRemoveSavedClassroom(selectedClassroom.id);
+                          } else {
+                            handleSaveClassroom(selectedClassroom);
+                          }
+                        }}
+                        title={savedClassrooms.some(c => c.id === selectedClassroom.id) ? "Remove from favorites" : "Add to favorites"}
+                      >
+                        {savedClassrooms.some(c => c.id === selectedClassroom.id) ? '★' : '☆'}
+                      </button>
+                    </div>
                   </motion.div>
                 )}
               </div>
@@ -178,6 +256,27 @@ function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Directions Panel */}
+      <AnimatePresence>
+        {userLocation && selectedClassroom && (
+          <DirectionsPanel
+            userLocation={userLocation}
+            selectedClassroom={selectedClassroom}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Report Modal */}
+      <ReportClassroom
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+      />
+
+      <AccessibilitySettings
+        onDarkModeChange={handleDarkModeChange}
+        onFontSizeChange={handleFontSizeChange}
+      />
     </div>
   );
 }

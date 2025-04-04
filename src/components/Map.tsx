@@ -3,7 +3,7 @@ import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { Classroom } from '../services/api';
 
-mapboxgl.accessToken = 'YOUR_TOKEN';
+mapboxgl.accessToken = 'YOUR_TOKEN_HERE';
 
 interface MapProps {
   center: [number, number];
@@ -126,7 +126,6 @@ const Map: React.FC<MapProps> = ({
     map.current.on('dblclick', (e) => {
       if (!map.current || !onLocationSelect) return;
       
-      // Remove existing click marker
       if (clickMarker.current) {
         clickMarker.current.remove();
       }

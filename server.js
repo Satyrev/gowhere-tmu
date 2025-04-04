@@ -6,11 +6,9 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connection
 let isMongoConnected = false;
 
 mongoose.connect(process.env.MONGODB_URI)
@@ -23,7 +21,6 @@ mongoose.connect(process.env.MONGODB_URI)
     console.log('Server will run with in-memory data');
   });
 
-// Define Classroom schema
 const classroomSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   coordinates: { type: [Number], required: true },
@@ -32,7 +29,6 @@ const classroomSchema = new mongoose.Schema({
   description: { type: String }
 });
 
-// Create Classroom model if MongoDB is connected
 let Classroom;
 try {
   Classroom = mongoose.model('Classroom');
@@ -40,47 +36,45 @@ try {
   Classroom = mongoose.model('Classroom', classroomSchema);
 }
 
-// In-memory fallback data
 const fallbackClassrooms = [
   {
     id: 'KHE-123',
-    coordinates: [43.65196973085074, -79.37990394697654],
+    coordinates: [43.65895544439962, -79.37854820421036],
     building: 'Kerr Hall East',
     floor: 1
   },
   {
     id: 'KHE-321',
-    coordinates: [43.65196973085074, -79.37990394697654],
+    coordinates: [43.65895544439962, -79.37854820421036],
     building: 'Kerr Hall East',
     floor: 3
   },
   {
     id: 'ENG-101',
-    coordinates: [43.65897, -79.37834],
+    coordinates: [43.65757173564517, -79.37721037381903],
     building: 'Engineering Building',
     floor: 1
   },
   {
     id: 'ENG-202',
-    coordinates: [43.65897, -79.37834],
+    coordinates: [43.65757173564517, -79.37721037381903],
     building: 'Engineering Building',
     floor: 2
   },
   {
     id: 'RCC-201',
-    coordinates: [43.65834, -79.38189],
+    coordinates: [43.6587185293533, -79.3769543018029],
     building: 'Rogers Communications Centre',
     floor: 2
   },
   {
     id: 'RCC-301',
-    coordinates: [43.65834, -79.38189],
+    coordinates: [43.6587185293533, -79.3769543018029],
     building: 'Rogers Communications Centre',
     floor: 3
   }
 ];
 
-// Function to seed the database with initial classroom data
 async function seedDatabase() {
   if (!isMongoConnected) return;
   
@@ -95,8 +89,6 @@ async function seedDatabase() {
   }
 }
 
-// API Routes
-// Get all classrooms
 app.get('/api/classrooms', async (req, res) => {
   try {
     if (isMongoConnected) {
@@ -111,7 +103,6 @@ app.get('/api/classrooms', async (req, res) => {
   }
 });
 
-// Get classroom by ID
 app.get('/api/classrooms/:id', async (req, res) => {
   try {
     if (isMongoConnected) {
@@ -133,20 +124,34 @@ app.get('/api/classrooms/:id', async (req, res) => {
   }
 });
 
-// Search classrooms
 app.get('/api/classrooms/search/:query', async (req, res) => {
   try {
-    const query = req.params.query.toUpperCase();
+    const query = req.params.query.toLowerCase();
     
     if (isMongoConnected) {
+      const searchParts = query.split(/\s+/);
+      
+      const searchPattern = searchParts.map(part => `(?=.*${part})`).join('');
+      
       const classrooms = await Classroom.find({
-        id: { $regex: query, $options: 'i' }
+        $or: [
+          { id: { $regex: searchPattern, $options: 'i' } },
+          { building: { $regex: searchPattern, $options: 'i' } }
+        ]
       });
+      
       res.json(classrooms);
     } else {
-      const filtered = fallbackClassrooms.filter(
-        classroom => classroom.id.toUpperCase().includes(query)
-      );
+      const filtered = fallbackClassrooms.filter(classroom => {
+        const normalizedId = classroom.id.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normalizedBuilding = classroom.building ? classroom.building.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+        const normalizedQuery = query.replace(/[^a-z0-9]/g, '');
+        
+        return searchParts.every(part => 
+          normalizedId.includes(part) || 
+          normalizedBuilding.includes(part)
+        );
+      });
       res.json(filtered);
     }
   } catch (error) {
@@ -155,7 +160,6 @@ app.get('/api/classrooms/search/:query', async (req, res) => {
   }
 });
 
-// Add new classroom
 app.post('/api/classrooms', async (req, res) => {
   try {
     if (!isMongoConnected) {
@@ -171,7 +175,6 @@ app.post('/api/classrooms', async (req, res) => {
   }
 });
 
-// Update classroom
 app.put('/api/classrooms/:id', async (req, res) => {
   try {
     if (!isMongoConnected) {
@@ -195,7 +198,6 @@ app.put('/api/classrooms/:id', async (req, res) => {
   }
 });
 
-// Delete classroom
 app.delete('/api/classrooms/:id', async (req, res) => {
   try {
     if (!isMongoConnected) {
@@ -215,17 +217,14 @@ app.delete('/api/classrooms/:id', async (req, res) => {
   }
 });
 
-// Start the server
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
   
-  // Try to seed the database
   if (isMongoConnected) {
     seedDatabase();
   }
 });
 
-// Handle process termination
 process.on('SIGINT', async () => {
   if (isMongoConnected) {
     await mongoose.connection.close();
